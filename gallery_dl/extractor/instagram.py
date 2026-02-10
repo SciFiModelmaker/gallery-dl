@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 # Copyright 2018-2020 Leonardo Taccari
-# Copyright 2018-2025 Mike Fährmann
+# Copyright 2018-2026 Mike Fährmann
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License version 2 as
@@ -122,8 +122,8 @@ class InstagramExtractor(Extractor):
     def posts(self):
         return ()
 
-    def finalize(self):
-        if self._cursor:
+    def finalize(self, status):
+        if status and self._cursor:
             self.log.info("Use '-o cursor=%s' to continue downloading "
                           "from the current position", self._cursor)
 
@@ -570,7 +570,7 @@ class InstagramTaggedExtractor(InstagramExtractor):
             user = self.api.user_by_id(self.user_id)
         else:
             self.user_id = self.api.user_id(self.item)
-            user = self.api.user_by_name(self.item)
+            user = self.api.user_by_screen_name(self.item)
 
         return {
             "tagged_owner_id" : user["id"],
@@ -757,7 +757,7 @@ class InstagramInfoExtractor(InstagramExtractor):
         if screen_name.startswith("id:"):
             user = self.api.user_by_id(screen_name[3:])
         else:
-            user = self.api.user_by_name(screen_name)
+            user = self.api.user_by_screen_name(screen_name)
 
         return iter(((Message.Directory, "", user),))
 
@@ -779,7 +779,7 @@ class InstagramAvatarExtractor(InstagramExtractor):
             if user.startswith("id:"):
                 user = self.api.user_by_id(user[3:])
             else:
-                user = self.api.user_by_name(user)
+                user = self.api.user_by_screen_name(user)
                 user["pk"] = user["id"]
             url = user.get("profile_pic_url_hd") or user["profile_pic_url"]
             avatar = {"url": url, "width": 0, "height": 0}
@@ -804,6 +804,19 @@ class InstagramRestAPI():
 
     def __init__(self, extractor):
         self.extractor = extractor
+
+        _cache = self.extractor.config("user-cache", True)
+        _cache = memcache if not _cache or _cache == "memory" else cache
+        self.user_by_id = _cache(36500*86400, 0)(self.user_by_id)
+        self.user_by_name = _cache(36500*86400, 0)(self.user_by_name)
+        self.user_by_search = _cache(36500*86400, 0)(self.user_by_search)
+
+        strategy = self.extractor.config("user-strategy")
+        if strategy is not None and strategy in {
+                "web_profile_info", "profile_info", "info"}:
+            self._topsearch = False
+        else:
+            self._topsearch = True
 
     def guide(self, guide_id):
         endpoint = "/v1/guides/web_info/"
@@ -869,20 +882,39 @@ class InstagramRestAPI():
         }
         return self._pagination_sections(endpoint, data)
 
-    @memcache(keyarg=1)
-    def user_by_name(self, screen_name):
+    def user_by_id(self, user_id):
+        endpoint = f"/v1/users/{user_id}/info/"
+        return self._call(endpoint)["user"]
+
+    def user_by_name(self, username):
         endpoint = "/v1/users/web_profile_info/"
-        params = {"username": screen_name}
+        params = {"username": username}
         try:
             return self._call(
                 endpoint, params=params, notfound="user")["data"]["user"]
         except KeyError:
             raise exception.NotFoundError("user")
 
-    @memcache(keyarg=1)
-    def user_by_id(self, user_id):
-        endpoint = f"/v1/users/{user_id}/info/"
-        return self._call(endpoint)["user"]
+    def user_by_search(self, username):
+        url = "https://www.instagram.com/web/search/topsearch/"
+        params = {"query": username}
+
+        name = username.lower()
+        for result in self._call(url, params=params)["users"]:
+            user = result["user"]
+            if user["username"].lower() == name:
+                return user
+
+    def user_by_screen_name(self, screen_name):
+        if self._topsearch:
+            if user := self.user_by_search(screen_name):
+                return user
+            self.user_by_search.invalidate(screen_name)
+        else:
+            if user := self.user_by_name(screen_name):
+                return user
+            self.user_by_name.invalidate(screen_name)
+        raise exception.NotFoundError("user")
 
     def user_id(self, screen_name, check_private=True):
         if screen_name.startswith("id:"):
@@ -890,15 +922,13 @@ class InstagramRestAPI():
                 self.extractor._user = self.user_by_id(screen_name[3:])
             return screen_name[3:]
 
-        user = self.user_by_name(screen_name)
-        if user is None:
-            raise exception.AuthorizationError(
-                "Login required to access this profile")
-        if check_private and user["is_private"] and \
-                not user["followed_by_viewer"]:
+        user = self.user_by_screen_name(screen_name)
+        if check_private and user.get("is_private") and \
+                not user.get("followed_by_viewer", True):
             name = user["username"]
             s = "" if name.endswith("s") else "s"
             self.extractor.log.warning("%s'%s posts are private", name, s)
+
         self.extractor._assign_user(user)
         return user["id"]
 
@@ -945,7 +975,10 @@ class InstagramRestAPI():
     def _call(self, endpoint, **kwargs):
         extr = self.extractor
 
-        url = "https://www.instagram.com/api" + endpoint
+        if endpoint[0] == "/":
+            url = "https://www.instagram.com/api" + endpoint
+        else:
+            url = endpoint
         kwargs["headers"] = {
             "Accept"          : "*/*",
             "X-CSRFToken"     : extr.csrf_token,
@@ -1049,7 +1082,7 @@ class InstagramGraphqlAPI():
         self._json_dumps = util.json_dumps
 
         api = InstagramRestAPI(extractor)
-        self.user_by_name = api.user_by_name
+        self.user_by_screen_name = api.user_by_screen_name
         self.user_by_id = api.user_by_id
         self.user_id = api.user_id
 
