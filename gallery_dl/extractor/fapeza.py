@@ -13,7 +13,7 @@ from .. import text, exception
 BASE_PATTERN = r"(?:https?://)?(?:www\.)?fapeza\.(?:com|su)"
 
 
-class fapezaPostExtractor(Extractor):
+class FapezaPostExtractor(Extractor):
     """Extractor for individual posts on fapeza.com"""
     category = "fapeza"
     subcategory = "post"
@@ -42,13 +42,13 @@ class fapezaPostExtractor(Extractor):
             "type" : "video" if 'type="video' in page else "photo",
             "thumbnail": text.extr(page, 'poster="', '"'),
         }
+        self.log.debug(data)
         url = text.extr(page, 'src="', '"').replace(
             ".md", "").replace(".th", "")
         yield Message.Directory, "", data
         yield Message.Url, url, text.nameext_from_url(url, data)
 
-
-class fapezaModelExtractor(Extractor):
+class FapezaModelExtractor(Extractor):
     """Extractor for all posts from a fapeza model"""
     category = "fapeza"
     subcategory = "model"
@@ -64,10 +64,9 @@ class fapezaModelExtractor(Extractor):
 
     def items(self):
         num = 1
-        data = {"_extractor": fapezaPostExtractor}
+        data = {"_extractor": FapezaPostExtractor}
         while True:
-            url = f"{self.root}/{self.model}/{num}/"
-            # url = f"{self.root}/ajax/model/{self.model}/page-{num}/"
+            url = f"{self.root}/{self.model}/page-{num}/"
             page = self.request(url).text
             if not page:
                 return
@@ -82,7 +81,7 @@ class fapezaModelExtractor(Extractor):
             num += 1
 
 
-class fapezaPathExtractor(Extractor):
+class FapezaPathExtractor(Extractor):
     """Extractor for models and posts from fapeza.com paths"""
     category = "fapeza"
     subcategory = "path"
@@ -99,14 +98,14 @@ class fapezaPathExtractor(Extractor):
     def items(self):
         num = 1
         if self.path in ("top-likes", "top-followers"):
-            data = {"_extractor": fapezaModelExtractor}
+            data = {"_extractor": FapezaModelExtractor}
         else:
-            data = {"_extractor": fapezaPostExtractor}
+            data = {"_extractor": FapezaPostExtractor}
 
         if "fapeza.su" in self.root:
             self.path = self.path.replace("-", "/")
             if self.path == "trending":
-                data = {"_extractor": fapezaModelExtractor}
+                data = {"_extractor": FapezaModelExtractor}
 
         while True:
             url = f"{self.root}/ajax/{self.path}/page-{num}/"

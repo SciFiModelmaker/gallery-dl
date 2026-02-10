@@ -64,6 +64,7 @@ CATEGORY_MAP = {
     "fallenangels"   : "Fallen Angels Scans",
     "fanbox"         : "pixivFANBOX",
     "fappic"         : "Fappic.com",
+    "fapeza"         : "Fapeza",
     "fashionnova"    : "Fashion Nova",
     "fikfap"         : "FikFap",
     "fitnakedgirls"  : "FitNakedGirls",
